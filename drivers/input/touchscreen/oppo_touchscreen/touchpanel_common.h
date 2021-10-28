@@ -77,6 +77,7 @@
 #define KEY_GESTURE_SWIPE_RIGHT     258
 #define KEY_GESTURE_SINGLE_TAP      KEY_F9
 #define FingerprintDown     14
+#define KEY_FOD_DOWN       84
 #define FingerprintUp       15
 #define SingleTap           16
 #define Heart               17
