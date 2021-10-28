@@ -1003,6 +1003,7 @@ struct earsense_proc_operations {
 };
 
 static bool infra_prox_far = false; //To be used by userspace proximity to toggle kernel proximity events
+static bool fod_proxcheck = false;
 
 /*********PART3:function or variables for other files**********************/
 extern unsigned int tp_debug ;                                                            /*using for print debug log*/
