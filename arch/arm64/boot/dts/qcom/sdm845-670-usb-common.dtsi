@@ -73,7 +73,8 @@
 			compatible = "snps,dwc3";
 			reg = <0x0a600000 0xcd00>;
 			interrupts = <0 133 0>;
-			usb-phy = <&qusb_phy0>, <&usb_qmp_dp_phy>;
+			//usb-phy = <&qusb_phy0>, <&usb_qmp_dp_phy>;
+			usb-phy = <&qusb_phy0>, <&usb_nop_phy>;
 			tx-fifo-resize;
 			linux,sysdev_is_parent;
 			snps,disable-clk-gating;
@@ -182,7 +183,6 @@
 		compatible = "qcom,usb-ssphy-qmp-dp-combo";
 		reg = <0x88e8000 0x3000>;
 		reg-names = "qmp_phy_base";
-
 		vdd-supply = <&pm8998_l1>;
 		core-supply = <&pm8998_l26>;
 		qcom,vdd-voltage-level = <0 880000 880000>;

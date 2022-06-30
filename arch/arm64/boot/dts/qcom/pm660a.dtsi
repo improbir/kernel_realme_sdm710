@@ -12,12 +12,20 @@
 
 /* Disable WLED */
 &pm660l_wled {
-	status = "disabled";
+//#ifndef OPLUS_BUG_STABILITY
+//	status = "disabled";
+//#else /* OPLUS_BUG_STABILITY */
+	status = "okay";
+//#endif /* OPLUS_BUG_STABILITY */
 };
 
 /* disable LCDB */
 &pm660l_lcdb {
-	status = "disabled";
+//#ifndef OPLUS_BUG_STABILITY
+//	status = "disabled";
+//#else /* OPLUS_BUG_STABILITY */
+	status = "okay";
+//#endif /* OPLUS_BUG_STABILITY */
 };
 
 &pm660a_oledb {
