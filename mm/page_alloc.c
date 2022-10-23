@@ -67,6 +67,7 @@
 #include <linux/show_mem_notifier.h>
 #include <linux/psi.h>
 #include <linux/khugepaged.h>
+#include <linux/devfreq_boost.h>
 
 #include <asm/sections.h>
 #include <asm/tlbflush.h>
@@ -3984,6 +3985,9 @@ retry_cpuset:
 			used_vmpressure = vmpressure_inc_users(order);
 		wake_all_kswapds(order, ac);
 	}
+
+       /* Boost DDR bus when memory is low so allocation latency doesn't get too bad */
+	devfreq_boost_kick(DEVFREQ_MSM_CPUBW);
 
 	/*
 	 * The adjusted alloc_flags might result in immediate success, so try
