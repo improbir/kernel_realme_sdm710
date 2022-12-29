@@ -1006,7 +1006,6 @@ static bool infra_prox_far = false; //To be used by userspace proximity to toggl
 static bool fod_proxcheck = false;
 static bool fod_aod_listener = false; //To be used as a listener for AOD status
 static bool fod_aod_pressed = false; //To be used when on AoD and fingerprint is pressed
-static bool prox_near = false;//To be used by userspace light to toggle kernel proximity events
 
 /*********PART3:function or variables for other files**********************/
 extern unsigned int tp_debug ;                                                            /*using for print debug log*/

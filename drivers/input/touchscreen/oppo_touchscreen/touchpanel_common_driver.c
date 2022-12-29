@@ -172,8 +172,6 @@ void operate_mode_switch(struct touchpanel_data *ts)
     }
 
     if (ts->is_suspended) {
-        infra_prox_far = true;
-        prox_near = true;
         if (ts->black_gesture_support || ts->fingerprint_underscreen_support) {
             if ((ts->gesture_enable & 0x01) == 1 || ts->fp_enable) {
                 if (ts->single_tap_support && ts->ts_ops->enable_single_tap) {
@@ -265,9 +263,6 @@ void operate_mode_switch(struct touchpanel_data *ts)
         }
 
         ts->ts_ops->mode_switch(ts->chip_data, MODE_NORMAL, true);
-
-        infra_prox_far = false;
-        prox_near = false;
     }
 }
 
@@ -2092,16 +2087,18 @@ static ssize_t prox_mask_write(struct file *file, const char __user *user_buf, s
     infra_prox_far = !(!!value);
     TPD_INFO("%s was the value of infra proximity", infra_prox_far ? "Near": "Far");
 
-    if (infra_prox_far)
-        prox_near=infra_prox_far;
-    // send event & wait for any change
+    // Make sure the touchpanel is suspended before writing event node.
+    if(!(!!ts->fd_enable) && (infra_prox_far || !infra_prox_far)) {
+        TPD_INFO("proximity Bailing out, Suspend Status:%d, TP_PS:%d, INFRA_PS:%d", !!ts->is_suspended , !!ts->fd_enable, infra_prox_far);
+        return count;
+    }
+
+    //hold mutex & send event
+    mutex_lock(&ts->mutex);
     input_event(ts->ps_input_dev, EV_MSC, MSC_RAW, infra_prox_far);
     input_sync(ts->ps_input_dev);
-    while (infra_prox_far && !ambient_display_status()){
-        input_event(ts->ps_input_dev, EV_MSC, MSC_RAW, infra_prox_far && prox_near);
-        input_sync(ts->ps_input_dev);
-    }
-        
+    mutex_unlock(&ts->mutex);
+
     return count;
 }
 
@@ -2232,52 +2229,6 @@ static ssize_t proc_is_dozing_rn(struct file *file, char __user *user_buf, size_
 static const struct file_operations proc_is_dozing_rn_fops = {
     .read  = proc_is_dozing_rn,
     .open  = simple_open,
-    .owner = THIS_MODULE,
-};
-
-static ssize_t near_show(struct file *file, char __user *user_buf, size_t count, loff_t *ppos)
-{
-    char page[PAGESIZE] = {0};
-    snprintf(page, PAGESIZE-1, "%d\n", prox_near);
-    return simple_read_from_buffer(user_buf, count, ppos, page, strlen(page));
-}
-
-static ssize_t near_write(struct file *file, const char __user *user_buf, size_t count, loff_t *ppos)
-{
-    struct touchpanel_data *ts = PDE_DATA(file_inode(file));
-    int value = 0;
-    char buf[4] = {0};
-
-    if (count > 2 || !ts)
-        return count;
-
-    if (copy_from_user(buf, user_buf, count)) {
-        TPD_INFO("%s: read proc input error.\n", __func__);
-        return count;
-    }
-
-    if (!ts->is_suspended && (ts->suspend_state == TP_SPEEDUP_RESUME_COMPLETE)) {
-        mutex_lock(&ts->mutex);
-        infra_prox_far = false;
-        mutex_unlock(&ts->mutex);
-    }
-    sscanf(buf, "%d", &value);
-
-    prox_near = !!value;
-    
-    if(!prox_near){//send a far event in case the while loop in prox_mask_write fail 
-        input_event(ts->ps_input_dev, EV_MSC, MSC_RAW, 0);
-        input_sync(ts->ps_input_dev);
-        if(!ambient_display_status())
-            infra_prox_far = false;
-    }
-    return count;
-}
-
-static const struct file_operations near_control_fops = {
-    .write = near_write,
-    .read =  near_show,
-    .open = simple_open,
     .owner = THIS_MODULE,
 };
 
@@ -4429,12 +4380,6 @@ static int init_touchpanel_proc(struct touchpanel_data *ts)
     }
 
     prEntry_tmp = proc_create_data("DOZE_STATUS", 0444, prEntry_tp, &proc_is_dozing_rn_fops, ts);
-    if (prEntry_tmp == NULL) {
-        ret = -ENOMEM;
-        TPD_INFO("%s: Couldn't create proc entry, %d\n", __func__, __LINE__);
-    }
-
-    prEntry_tmp = proc_create_data("prox_near", 0666, prEntry_tp, &near_control_fops, ts);
     if (prEntry_tmp == NULL) {
         ret = -ENOMEM;
         TPD_INFO("%s: Couldn't create proc entry, %d\n", __func__, __LINE__);
