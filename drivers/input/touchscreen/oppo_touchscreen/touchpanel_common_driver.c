@@ -2141,76 +2141,6 @@ static const struct file_operations fod_prox_control_fops = {
     .owner = THIS_MODULE,
 };
 
-static ssize_t fod_aodlistener_show(struct file *file, char __user *user_buf, size_t count, loff_t *ppos)
-{
-    char page[PAGESIZE] = {0};
-    snprintf(page, PAGESIZE-1, "%d\n", fod_aod_listener);
-    return simple_read_from_buffer(user_buf, count, ppos, page, strlen(page));
-}
-
-static ssize_t fod_aodlistener_write(struct file *file, const char __user *user_buf, size_t count, loff_t *ppos)
-{
-    struct touchpanel_data *ts = PDE_DATA(file_inode(file));
-    int value = 0;
-    char buf[4] = {0};
-
-    if (count > 2 || !ts)
-        return count;
-
-    if (copy_from_user(buf, user_buf, count)) {
-        TPD_INFO("%s: read proc input error.\n", __func__);
-        return count;
-    }
-
-    sscanf(buf, "%d", &value);
-
-    fod_aod_listener = !!value;
-
-    return count;
-}
-
-static const struct file_operations fod_aodlistener_control_fops = {
-    .write = fod_aodlistener_write,
-    .read =  fod_aodlistener_show,
-    .open = simple_open,
-    .owner = THIS_MODULE,
-};
-
-static ssize_t fod_aodpressed_show(struct file *file, char __user *user_buf, size_t count, loff_t *ppos)
-{
-    char page[PAGESIZE] = {0};
-    snprintf(page, PAGESIZE-1, "%d\n", fod_aod_pressed);
-    return simple_read_from_buffer(user_buf, count, ppos, page, strlen(page));
-}
-
-static ssize_t fod_aodpressed_write(struct file *file, const char __user *user_buf, size_t count, loff_t *ppos)
-{
-    struct touchpanel_data *ts = PDE_DATA(file_inode(file));
-    int value = 0;
-    char buf[4] = {0};
-
-    if (count > 2 || !ts)
-        return count;
-
-    if (copy_from_user(buf, user_buf, count)) {
-        TPD_INFO("%s: read proc input error.\n", __func__);
-        return count;
-    }
-
-    sscanf(buf, "%d", &value);
-
-    fod_aod_pressed = !!value;
-
-    return count;
-}
-
-static const struct file_operations fod_aodpressed_control_fops = {
-    .write = fod_aodpressed_write,
-    .read =  fod_aodpressed_show,
-    .open = simple_open,
-    .owner = THIS_MODULE,
-};
-
 static ssize_t cap_vk_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
 {
     struct button_map *button_map;
@@ -4335,18 +4265,6 @@ static int init_touchpanel_proc(struct touchpanel_data *ts)
     }
 
     prEntry_tmp = proc_create_data("fod_proxcheck", 0666, prEntry_tp, &fod_prox_control_fops, ts);
-    if (prEntry_tmp == NULL) {
-        ret = -ENOMEM;
-        TPD_INFO("%s: Couldn't create proc entry, %d\n", __func__, __LINE__);
-    }
-
-    prEntry_tmp = proc_create_data("fod_aod_listener", 0666, prEntry_tp, &fod_aodlistener_control_fops, ts);
-    if (prEntry_tmp == NULL) {
-        ret = -ENOMEM;
-        TPD_INFO("%s: Couldn't create proc entry, %d\n", __func__, __LINE__);
-    }
-
-    prEntry_tmp = proc_create_data("fod_aod_pressed", 0666, prEntry_tp, &fod_aodpressed_control_fops, ts);
     if (prEntry_tmp == NULL) {
         ret = -ENOMEM;
         TPD_INFO("%s: Couldn't create proc entry, %d\n", __func__, __LINE__);
