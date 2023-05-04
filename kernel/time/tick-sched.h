@@ -1,6 +1,7 @@
 #ifndef _TICK_SCHED_H
 #define _TICK_SCHED_H
 
+#include <linux/tick.h>
 #include <linux/hrtimer.h>
 
 enum tick_device_mode {
