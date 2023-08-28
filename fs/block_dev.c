@@ -1360,7 +1360,7 @@ static int __blkdev_get(struct block_device *bdev, fmode_t mode, int for_part)
 			BUG_ON(for_part);
 			ret = __blkdev_get(whole, mode, 1);
 			if (ret) {
-				bdput(bdev);
+				bdput(whole);
 				goto out_clear;
 			}
 			bdev->bd_contains = whole;
