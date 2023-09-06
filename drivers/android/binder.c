@@ -3166,6 +3166,12 @@ static void binder_transaction(struct binder_proc *proc,
 		hans_check_binder(tr, proc, target_proc, true);
 #endif /*OPLUS_FEATURE_HANS_FREEZE*/
 		e->to_node = target_node->debug_id;
+
+		if (WARN_ON(proc == target_proc)) {
+			return_error = BR_FAILED_REPLY;
+			goto err_invalid_target_handle;
+		}
+
 		if (security_binder_transaction(proc->tsk,
 						target_proc->tsk) < 0) {
 			return_error = BR_FAILED_REPLY;
