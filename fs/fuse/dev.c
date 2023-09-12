@@ -993,7 +993,6 @@ static int fuse_ref_page(struct fuse_copy_state *cs, struct page *page,
 		return err;
 	}
 
-
 	fuse_copy_finish(cs);
 
 	buf = cs->pipebufs;

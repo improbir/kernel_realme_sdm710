@@ -3740,6 +3740,7 @@ extern void f2fs_build_fault_attr(struct f2fs_sb_info *sbi, unsigned int rate,
 							unsigned int type);
 #else
 #define f2fs_build_fault_attr(sbi, rate, type)		do { } while (0)
+
 #endif
 
 static inline bool is_journalled_quota(struct f2fs_sb_info *sbi)
