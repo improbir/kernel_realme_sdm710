@@ -825,7 +825,6 @@ void __noreturn do_exit(long code)
 		 * OWNER_DIED bit is set by now or we push the blocked
 		 * task into the wait for ever nirwana as well.
 		 */
-		tsk->flags |= PF_EXITPIDONE;
 		futex_exit_recursive(tsk);
 		set_current_state(TASK_UNINTERRUPTIBLE);
 		schedule();
