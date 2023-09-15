@@ -544,8 +544,8 @@ static void __proc_set_tty(struct tty_struct *tty)
 	put_pid(tty->session);
 	put_pid(tty->pgrp);
 	tty->pgrp = get_pid(task_pgrp(current));
-	spin_unlock_irqrestore(&tty->ctrl_lock, flags);
 	tty->session = get_pid(task_session(current));
+	spin_unlock_irqrestore(&tty->ctrl_lock, flags);
 	if (current->signal->tty) {
 		tty_debug(tty, "current tty %s not NULL!!\n",
 			  current->signal->tty->name);
@@ -935,7 +935,6 @@ void disassociate_ctty(int on_exit)
 	spin_lock_irq(&current->sighand->siglock);
 	put_pid(current->signal->tty_old_pgrp);
 	current->signal->tty_old_pgrp = NULL;
-
 	tty = tty_kref_get(current->signal->tty);
 	spin_unlock_irq(&current->sighand->siglock);
 
@@ -2682,7 +2681,6 @@ static int tiocgsid(struct tty_struct *tty, struct tty_struct *real_tty, pid_t _
 {
         unsigned long flags;
         pid_t sid;
-
 	/*
 	 * (tty == real_tty) is a cheap way of
 	 * testing if the tty is NOT a master pty.
@@ -3122,7 +3120,6 @@ void __do_SAK(struct tty_struct *tty)
 
 	if (!tty)
 		return;
-
        
 	spin_lock_irqsave(&tty->ctrl_lock, flags);
         session = get_pid(tty->session);
