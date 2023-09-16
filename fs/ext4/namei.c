@@ -1619,15 +1619,6 @@ static struct dentry *ext4_lookup(struct inode *dir, struct dentry *dentry, unsi
 					 ino);
 			return ERR_PTR(-EFSCORRUPTED);
 		}
-		if (!IS_ERR(inode) && IS_ENCRYPTED(dir) &&
-		    (S_ISDIR(inode->i_mode) || S_ISLNK(inode->i_mode)) &&
-		    !fscrypt_has_permitted_context(dir, inode)) {
-			ext4_warning(inode->i_sb,
-				     "Inconsistent encryption contexts: %lu/%lu",
-				     dir->i_ino, inode->i_ino);
-			iput(inode);
-			return ERR_PTR(-EPERM);
-		}
 	}
 	return d_splice_alias(inode, dentry);
 }
@@ -3581,13 +3572,6 @@ static int ext4_rename(struct inode *old_dir, struct dentry *old_dentry,
 	retval = -ENOENT;
 	if (!old.bh || le32_to_cpu(old.de->inode) != old.inode->i_ino)
 		goto release_bh;
-
-	if ((old.dir != new.dir) &&
-	    ext4_encrypted_inode(new.dir) &&
-	    !fscrypt_has_permitted_context(new.dir, old.inode)) {
-		retval = -EXDEV;
-		goto release_bh;
-	}
 
 	new.bh = ext4_find_entry(new.dir, &new.dentry->d_name,
 				 &new.de, &new.inlined);
