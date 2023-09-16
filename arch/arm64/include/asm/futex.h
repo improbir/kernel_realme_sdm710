@@ -15,22 +15,21 @@
  */
 #ifndef __ASM_FUTEX_H
 #define __ASM_FUTEX_H
-
 #ifdef __KERNEL__
-
 #include <linux/futex.h>
 #include <linux/uaccess.h>
-
+#include <asm/alternative.h>
+#include <asm/cpufeature.h>
 #include <asm/errno.h>
-
+#include <asm/sysreg.h>
 #define FUTEX_MAX_LOOPS	128 /* What's the largest number you can think of? */
-
 #define __futex_atomic_op(insn, ret, oldval, uaddr, tmp, oparg)		\
 do {									\
-	uaccess_enable();						\
 	unsigned int loops = FUTEX_MAX_LOOPS;				\
 									\
 	asm volatile(							\
+	ALTERNATIVE("nop", SET_PSTATE_PAN(0), ARM64_HAS_PAN,		\
+		    CONFIG_ARM64_PAN)					\
 "	prfm	pstl1strm, %2\n"					\
 "1:	ldxr	%w1, %2\n"						\
 	insn "\n"							\
@@ -48,7 +47,6 @@ do {									\
 "	.popsection\n"							\
 	_ASM_EXTABLE(1b, 4b)						\
 	_ASM_EXTABLE(2b, 4b)						\
-	uaccess_disable();						\
 	ALTERNATIVE("nop", SET_PSTATE_PAN(1), ARM64_HAS_PAN,		\
 		    CONFIG_ARM64_PAN)					\
 	: "=&r" (ret), "=&r" (oldval), "+Q" (*uaddr), "=&r" (tmp),	\
@@ -56,14 +54,11 @@ do {									\
 	: "r" (oparg), "Ir" (-EFAULT), "Ir" (-EAGAIN)			\
 	: "memory");							\
 } while (0)
-
 static inline int
 arch_futex_atomic_op_inuser(int op, int oparg, int *oval, u32 __user *uaddr)
 {
 	int oldval = 0, ret, tmp;
-
 	pagefault_disable();
-
 	switch (op) {
 	case FUTEX_OP_SET:
 		__futex_atomic_op("mov	%w3, %w5",
@@ -88,15 +83,11 @@ arch_futex_atomic_op_inuser(int op, int oparg, int *oval, u32 __user *uaddr)
 	default:
 		ret = -ENOSYS;
 	}
-
 	pagefault_enable();
-
 	if (!ret)
 		*oval = oldval;
-
 	return ret;
 }
-
 static inline int
 futex_atomic_cmpxchg_inatomic(u32 *uval, u32 __user *_uaddr,
 			      u32 oldval, u32 newval)
@@ -105,13 +96,11 @@ futex_atomic_cmpxchg_inatomic(u32 *uval, u32 __user *_uaddr,
 	unsigned int loops = FUTEX_MAX_LOOPS;
 	u32 val, tmp;
 	u32 __user *uaddr;
-
 	if (!access_ok(VERIFY_WRITE, _uaddr, sizeof(u32)))
 		return -EFAULT;
-
 	uaddr = __uaccess_mask_ptr(_uaddr);
-	uaccess_enable();
 	asm volatile("// futex_atomic_cmpxchg_inatomic\n"
+ALTERNATIVE("nop", SET_PSTATE_PAN(0), ARM64_HAS_PAN, CONFIG_ARM64_PAN)
 "	prfm	pstl1strm, %2\n"
 "1:	ldxr	%w1, %2\n"
 "	sub	%w3, %w1, %w5\n"
@@ -134,11 +123,8 @@ ALTERNATIVE("nop", SET_PSTATE_PAN(1), ARM64_HAS_PAN, CONFIG_ARM64_PAN)
 	: "+r" (ret), "=&r" (val), "+Q" (*uaddr), "=&r" (tmp), "+r" (loops)
 	: "r" (oldval), "r" (newval), "Ir" (-EFAULT), "Ir" (-EAGAIN)
 	: "memory");
-	uaccess_disable();
-
 	*uval = val;
 	return ret;
 }
-
 #endif /* __KERNEL__ */
 #endif /* __ASM_FUTEX_H */
