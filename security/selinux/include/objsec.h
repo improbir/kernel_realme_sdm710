@@ -56,7 +56,6 @@ struct inode_security_struct {
 	unsigned char initialized;	/* initialization flag */
 	u32 tag;		/* Per-File-Encryption tag */
 	void *pfk_data; /* Per-File-Key data from ecryptfs */
-	struct mutex lock;
 	spinlock_t lock;
 };
 
