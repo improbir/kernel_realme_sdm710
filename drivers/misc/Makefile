@@ -69,6 +69,7 @@ obj-$(CONFIG_VXR200_XR_MISC) += vxr7200.o
 obj-y				+= motor.o
 obj-y				+= oplus_motor/
 #endif
+obj-$(CONFIG_BATTERY_SAVER)	+= battery_saver.o
 lkdtm-$(CONFIG_LKDTM)		+= lkdtm_core.o
 lkdtm-$(CONFIG_LKDTM)		+= lkdtm_bugs.o
 lkdtm-$(CONFIG_LKDTM)		+= lkdtm_heap.o
