@@ -227,6 +227,9 @@ config ARCH_HAS_FORTIFY_SOURCE
 	  An architecture should select this when it can successfully
 	  build and run with CONFIG_FORTIFY_SOURCE.
 
+config ARCH_HAS_SET_MEMORY
+	bool
+
 config FORTIFY_COMPILE_CHECK
 	depends on ARCH_HAS_FORTIFY_SOURCE
 	bool
@@ -833,6 +836,7 @@ config OPLUS_KEVENT_UPLOAD
 
 config OPLUS_SECURE_GUARD
 	def_bool y
+
 
 config CPU_NO_EFFICIENT_FFS
 	def_bool n

@@ -96,6 +96,15 @@ struct kernfs_elem_attr {
 	struct kernfs_node	*notify_next;	/* for kernfs_notify() */
 };
 
+/* represent a kernfs node */
+union kernfs_node_id {
+	struct {
+		u32		ino;
+		u32		generation;
+	};
+	u64			id;
+};
+
 /*
  * kernfs_node - the building block of kernfs hierarchy.  Each and every
  * kernfs node is represented by single kernfs_node.  Most fields are
@@ -132,9 +141,9 @@ struct kernfs_node {
 
 	void			*priv;
 
+	union kernfs_node_id	id;
 	unsigned short		flags;
 	umode_t			mode;
-	unsigned int		ino;
 	struct kernfs_iattrs	*iattr;
 };
 
@@ -164,7 +173,8 @@ struct kernfs_root {
 	unsigned int		flags;	/* KERNFS_ROOT_* flags */
 
 	/* private fields, do not use outside kernfs proper */
-	struct ida		ino_ida;
+	struct idr		ino_idr;
+	u32			next_generation;
 	struct kernfs_syscall_ops *syscall_ops;
 
 	/* list of kernfs_super_info of this root, protected by kernfs_mutex */

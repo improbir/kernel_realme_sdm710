@@ -96,9 +96,6 @@
 #include "fd.h"
 
 #include "../../lib/kstrtox.h"
-#if defined(OPLUS_FEATURE_VIRTUAL_RESERVE_MEMORY) && defined(CONFIG_VIRTUAL_RESERVE_MEMORY)
-#include "va_feature_node.h"
-#endif
 #ifdef OPLUS_FEATURE_UIFIRST
 #define GLOBAL_SYSTEM_UID KUIDT_INIT(1000)
 #define GLOBAL_SYSTEM_GID KGIDT_INIT(1000)
@@ -587,7 +584,7 @@ static const struct file_operations proc_lstats_operations = {
 static int proc_oom_score(struct seq_file *m, struct pid_namespace *ns,
 			  struct pid *pid, struct task_struct *task)
 {
-	unsigned long totalpages = totalram_pages + total_swap_pages;
+	unsigned long totalpages = totalram_pages() + total_swap_pages;
 	unsigned long points = 0;
 
 	points = oom_badness(task, NULL, NULL, totalpages) *
@@ -3268,9 +3265,6 @@ static const struct pid_entry tgid_base_stuff[] = {
 	REG("timerslack_ns", S_IRUGO|S_IWUGO, proc_pid_set_timerslack_ns_operations),
 #ifdef CONFIG_CPU_FREQ_TIMES
 	ONE("time_in_state", 0444, proc_time_in_state_show),
-#endif
-#if defined(OPLUS_FEATURE_VIRTUAL_RESERVE_MEMORY) && defined(CONFIG_VIRTUAL_RESERVE_MEMORY)
-	REG("va_feature", 0666, proc_va_feature_operations),
 #endif
 #ifdef CONFIG_CAMERA_OPT
         REG("camera_opt", S_IRUGO | S_IWUGO, proc_camera_opt_operations),

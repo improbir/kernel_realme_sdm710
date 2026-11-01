@@ -159,6 +159,8 @@ extern int compat_get_timespec(struct timespec *, const void __user *);
 extern int compat_put_timespec(const struct timespec *, void __user *);
 extern int compat_get_timeval(struct timeval *, const void __user *);
 extern int compat_put_timeval(const struct timeval *, void __user *);
+extern int compat_get_timespec64(struct timespec64 *, const void __user *);
+extern int compat_put_timespec64(const struct timespec64 *, void __user *);
 
 /*
  * This function convert a timespec if necessary and returns a *user
@@ -457,6 +459,12 @@ struct epoll_event;	/* fortunately, this one is fixed-layout */
 asmlinkage long compat_sys_epoll_pwait(int epfd,
 			struct epoll_event __user *events,
 			int maxevents, int timeout,
+			const compat_sigset_t __user *sigmask,
+			compat_size_t sigsetsize);
+asmlinkage long compat_sys_epoll_pwait2(int epfd,
+			struct epoll_event __user *events,
+			int maxevents,
+			const struct __kernel_timespec __user *timeout,
 			const compat_sigset_t __user *sigmask,
 			compat_size_t sigsetsize);
 

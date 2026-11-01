@@ -220,10 +220,13 @@ struct tcp_sock {
 	u16	advmss;		/* Advertised MSS			*/
 	u8	tlp_retrans:1,	/* TLP is a retransmission */
 		unused_1:7;
-	u8	rate_app_limited:1,  /* rate_{delivered,interval_us} limited? */
-		fastopen_connect:1, /* FASTOPEN_CONNECT sockopt */
-		is_sack_reneg:1,    /* in recovery from loss with SACK reneg? */
-		unused:5;
+	u32	chrono_start;	/* Start time in jiffies of a TCP chrono */
+	u32	chrono_stat[3];	/* Time in jiffies for chrono_stat stats */
+	u8	chrono_type:2,	/* current chronograph type */
+		rate_app_limited:1,  /* rate_{delivered,interval_us} limited? */
+                fastopen_connect:1, /* FASTOPEN_CONNECT sockopt */
+                is_sack_reneg:1,    /* in recovery from loss with SACK reneg? */
+		unused:4;
 	u8	nonagle     : 4,/* Disable Nagle algorithm?             */
 		thin_lto    : 1,/* Use linear timeouts for thin streams */
 		thin_dupack : 1,/* Fast retransmit on first dupack      */
@@ -240,6 +243,7 @@ struct tcp_sock {
 	u32	tlp_high_seq;	/* snd_nxt at the time of TLP */
 
 /* RTT measurement */
+    u64	tcp_mstamp;	/* most recent packet received/sent */
 	u32	srtt_us;	/* smoothed round trip time << 3 in usecs */
 	u32	mdev_us;	/* medium deviation			*/
 	u32	mdev_max_us;	/* maximal mdev for the last rtt period	*/
@@ -292,6 +296,8 @@ struct tcp_sock {
 	u32	sacked_out;	/* SACK'd packets			*/
 	u32	fackets_out;	/* FACK'd packets			*/
 
+	struct hrtimer	pacing_timer;
+
 	/* from STCP, retrans queue hinting */
 	struct sk_buff* lost_skb_hint;
 	struct sk_buff *retransmit_skb_hint;
@@ -330,6 +336,17 @@ struct tcp_sock {
 	unsigned int		keepalive_intvl;  /* time interval between keep alive probes */
 
 	int			linger2;
+
+
+/* Sock_ops bpf program related variables */
+#ifdef CONFIG_BPF
+	u8	bpf_sock_ops_cb_flags;  /* Control calling BPF programs
+					 * values defined in uapi/linux/tcp.h
+					 */
+#define BPF_SOCK_OPS_TEST_FLAG(TP, ARG) (TP->bpf_sock_ops_cb_flags & ARG)
+#else
+#define BPF_SOCK_OPS_TEST_FLAG(TP, ARG) 0
+#endif
 
 /* Receiver side RTT estimation */
 	struct {
@@ -371,7 +388,7 @@ struct tcp_sock {
 	u32	*saved_syn;
 };
 
-enum tsq_flags {
+enum tsq_enum {
 	TSQ_THROTTLED,
 	TSQ_QUEUED,
 	TCP_TSQ_DEFERRED,	   /* tcp_tasklet_func() found socket was owned */
@@ -380,6 +397,15 @@ enum tsq_flags {
 	TCP_MTU_REDUCED_DEFERRED,  /* tcp_v{4|6}_err() could not call
 				    * tcp_v{4|6}_mtu_reduced()
 				    */
+};
+
+enum tsq_flags {
+	TSQF_THROTTLED			= (1UL << TSQ_THROTTLED),
+	TSQF_QUEUED			= (1UL << TSQ_QUEUED),
+	TCPF_TSQ_DEFERRED		= (1UL << TCP_TSQ_DEFERRED),
+	TCPF_WRITE_TIMER_DEFERRED	= (1UL << TCP_WRITE_TIMER_DEFERRED),
+	TCPF_DELACK_TIMER_DEFERRED	= (1UL << TCP_DELACK_TIMER_DEFERRED),
+	TCPF_MTU_REDUCED_DEFERRED	= (1UL << TCP_MTU_REDUCED_DEFERRED),
 };
 
 static inline struct tcp_sock *tcp_sk(const struct sock *sk)

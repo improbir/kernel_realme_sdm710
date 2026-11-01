@@ -97,9 +97,6 @@
 #endif
 
 #if defined(CONFIG_SYSCTL)
-#if defined(CONFIG_OPLUS_FEATURE_HUNG_TASK_ENHANCE) && defined(CONFIG_OPLUS_FEATURE_DEATH_HEALER)
-#include <soc/oplus/system/hung_task_enhance.h>
-#endif
 
 /* External variables not in a header file. */
 extern int suid_dumpable;
@@ -134,11 +131,10 @@ static unsigned long one_ul = 1;
 static unsigned long long_max = LONG_MAX;
 static int one_hundred = 100;
 
-#if defined(VENDOR_EDIT) && defined(CONFIG_OPPO_ZRAM_OPT)
-//yixue.ge@PSW.BSP.Kernel.Driver 20170720 add for add direct_vm_swappiness
+#ifdef CONFIG_OPLUS_MM_HACKS
 extern int direct_vm_swappiness;
 static int two_hundred = 200;
-#endif
+#endif /* CONFIG_OPLUS_MM_HACKS */
 
 static int __maybe_unused one_thousand = 1000;
 #ifdef CONFIG_SCHED_WALT
@@ -1359,25 +1355,6 @@ static struct ctl_table kern_table[] = {
 		.extra1		= &zero,
 		.extra2		= &one,
 	},
-#if defined(CONFIG_OPLUS_FEATURE_HUNG_TASK_ENHANCE) && defined(CONFIG_OPLUS_FEATURE_DEATH_HEALER)
-/* record the hung task killing */
-	{
-		.procname	= "hung_task_kill",
-		.data		= &sysctl_hung_task_oppo_kill,
-		.maxlen		= 128,
-		.mode		= 0666,
-		.proc_handler	= proc_dostring,
-	},
-/* Foreground background optimization,change max io count */
-	{
-		.procname	= "hung_task_maxiowait_count",
-		.data		= &sysctl_hung_task_maxiowait_count,
-		.maxlen		= sizeof(int),
-		.mode		= 0644,
-		.proc_handler	= proc_dointvec_minmax,
-		.extra1		= &five,
-	},
-#endif
 #endif
 #ifdef CONFIG_RT_MUTEXES
 	{
@@ -1510,6 +1487,13 @@ static struct ctl_table kern_table[] = {
 		.extra2		= &one,
 	},
 #endif
+	{
+		.procname	= "bpf_stats_enabled",
+		.data		= &bpf_stats_enabled_key.key,
+		.maxlen		= sizeof(bpf_stats_enabled_key),
+		.mode		= 0644,
+		.proc_handler	= proc_do_static_key,
+	},
 #if defined(CONFIG_ARM) || defined(CONFIG_ARM64)
 	{
 		.procname	= "boot_reason",
@@ -1722,18 +1706,15 @@ static struct ctl_table vm_table[] = {
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec_minmax,
 		.extra1		= &zero,
-#if defined(VENDOR_EDIT) && defined(CONFIG_OPPO_ZRAM_OPT)
-//yixue.ge@PSW.BSP.Kernel.Driver 20170720 add for add direct_vm_swappiness
-		.extra2		= &two_hundred,
+#ifdef CONFIG_OPLUS_MM_HACKS
+		.extra2         = &two_hundred,
 #else
 		.extra2		= &one_hundred,
-#endif
+#endif /* CONFIG_OPLUS_MM_HACKS */
 	},
-	
-#if defined(VENDOR_EDIT) && defined(CONFIG_OPPO_ZRAM_OPT)
-//yixue.ge@PSW.BSP.Kernel.Driver 20170720 add for add direct_vm_swappiness
+#ifdef CONFIG_OPLUS_MM_HACKS
 	{
-		.procname	= "direct_swappiness",
+	        .procname	= "direct_swappiness",
 		.data		= &direct_vm_swappiness,
 		.maxlen 	= sizeof(direct_vm_swappiness),
 		.mode		= 0644,
@@ -1741,7 +1722,7 @@ static struct ctl_table vm_table[] = {
 		.extra1 	= &zero,
 		.extra2 	= &two_hundred,
 	},
-#endif
+#endif /* CONFIG_OPLUS_MM_HACKS */
 	{
 		.procname       = "want_old_faultaround_pte",
 		.data           = &want_old_faultaround_pte,
@@ -2032,6 +2013,27 @@ static struct ctl_table vm_table[] = {
 		.extra2		= &one,
 	},
 #endif
+	{
+		.procname	= "anon_min_kbytes",
+		.data		= &sysctl_anon_min_kbytes,
+		.maxlen		= sizeof(unsigned long),
+		.mode		= 0644,
+		.proc_handler	= proc_doulongvec_minmax,
+	},
+	{
+		.procname	= "clean_low_kbytes",
+		.data		= &sysctl_clean_low_kbytes,
+		.maxlen		= sizeof(unsigned long),
+		.mode		= 0644,
+		.proc_handler	= proc_doulongvec_minmax,
+	},
+	{
+		.procname	= "clean_min_kbytes",
+		.data		= &sysctl_clean_min_kbytes,
+		.maxlen		= sizeof(unsigned long),
+		.mode		= 0644,
+		.proc_handler	= proc_doulongvec_minmax,
+	},
 	{
 		.procname	= "user_reserve_kbytes",
 		.data		= &sysctl_user_reserve_kbytes,
@@ -3447,6 +3449,39 @@ int proc_douintvec_capacity(struct ctl_table *table, int write,
 }
 
 #endif /* CONFIG_PROC_SYSCTL */
+
+#if defined(CONFIG_SYSCTL)
+int proc_do_static_key(struct ctl_table *table, int write,
+		       void __user *buffer, size_t *lenp,
+		       loff_t *ppos)
+{
+	struct static_key *key = (struct static_key *)table->data;
+	static DEFINE_MUTEX(static_key_mutex);
+	int val, ret;
+	struct ctl_table tmp = {
+		.data   = &val,
+		.maxlen = sizeof(val),
+		.mode   = table->mode,
+		.extra1 = &zero,
+		.extra2 = &one,
+	};
+
+	if (write && !capable(CAP_SYS_ADMIN))
+		return -EPERM;
+
+	mutex_lock(&static_key_mutex);
+	val = static_key_enabled(key);
+	ret = proc_dointvec_minmax(&tmp, write, buffer, lenp, ppos);
+	if (write && !ret) {
+		if (val)
+			static_key_enable(key);
+		else
+			static_key_disable(key);
+	}
+	mutex_unlock(&static_key_mutex);
+	return ret;
+}
+#endif
 
 /*
  * No sense putting this after each symbol definition, twice,

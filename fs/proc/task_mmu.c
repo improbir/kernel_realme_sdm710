@@ -726,6 +726,7 @@ static void show_smap_vma_flags(struct seq_file *m, struct vm_area_struct *vma)
 		[ilog2(VM_NORESERVE)]	= "nr",
 		[ilog2(VM_HUGETLB)]	= "ht",
 		[ilog2(VM_ARCH_1)]	= "ar",
+		[ilog2(VM_WIPEONFORK)]	= "wf",
 		[ilog2(VM_DONTDUMP)]	= "dd",
 #ifdef CONFIG_MEM_SOFT_DIRTY
 		[ilog2(VM_SOFTDIRTY)]	= "sd",
@@ -1693,11 +1694,7 @@ cont:
 			break;
 	}
 	pte_unmap_unlock(pte - 1, ptl);
-#ifdef CONFIG_PROCESS_RECLAIM_ENHANCE
-	reclaimed = reclaim_pages_from_list(&page_list, vma, NULL);
-#else
 	reclaimed = reclaim_pages_from_list(&page_list, vma);
-#endif
 
 	rp->nr_reclaimed += reclaimed;
 	rp->nr_to_reclaim -= reclaimed;

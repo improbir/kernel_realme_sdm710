@@ -98,12 +98,15 @@ int kernfs_add_one(struct kernfs_node *kn);
 struct kernfs_node *kernfs_new_node(struct kernfs_node *parent,
 				    const char *name, umode_t mode,
 				    unsigned flags);
+struct kernfs_node *kernfs_find_and_get_node_by_ino(struct kernfs_root *root,
+						    unsigned int ino);
 
 /*
  * file.c
  */
 extern const struct file_operations kernfs_file_fops;
 
+void __init init_kernfs_file_pool(void);
 void kernfs_drain_open_files(struct kernfs_node *kn);
 
 /*

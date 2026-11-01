@@ -55,18 +55,10 @@
 #include <linux/swapops.h>
 #include <linux/balloon_compaction.h>
 
-#ifdef CONFIG_PROCESS_RECLAIM_ENHANCE
-/* collect interrupt doing time during process reclaim, only effect in age test */
-#include <linux/process_mm_reclaim.h>
-#endif
-
 #include "internal.h"
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/vmscan.h>
-#if defined(VENDOR_EDIT) && defined(CONFIG_FG_TASK_UID)
-#include <linux/oplus_healthinfo/fg.h>
-#endif
 
 struct scan_control {
 	/* How many pages shrink_list() should reclaim */
@@ -74,6 +66,15 @@ struct scan_control {
 
 	/* This context's GFP mask */
 	gfp_t gfp_mask;
+
+	/* The anonymous pages on the current node are below vm.anon_min_kbytes */
+	unsigned int anon_below_min:1;
+
+	/* The clean file pages on the current node are below vm.clean_low_kbytes */
+	unsigned int clean_below_low:1;
+
+	/* The clean file pages on the current node are below vm.clean_min_kbytes */
+	unsigned int clean_below_min:1;
 
 	/* Allocation order */
 	int order;
@@ -125,11 +126,6 @@ struct scan_control {
 	 * on memory until last task zap it.
 	 */
 	struct vm_area_struct *target_vma;
-
-#ifdef CONFIG_PROCESS_RECLAIM_ENHANCE
-	/* use mm_walk to regonize the behaviour of process reclaim. */
-	struct mm_walk *walk;
-#endif
 };
 
 #ifdef ARCH_HAS_PREFETCH
@@ -145,6 +141,10 @@ struct scan_control {
 #else
 #define prefetch_prev_lru_page(_page, _base, _field) do { } while (0)
 #endif
+
+unsigned long sysctl_anon_min_kbytes __read_mostly = CONFIG_ANON_MIN_KBYTES;
+unsigned long sysctl_clean_low_kbytes __read_mostly = CONFIG_CLEAN_LOW_KBYTES;
+unsigned long sysctl_clean_min_kbytes __read_mostly = CONFIG_CLEAN_MIN_KBYTES;
 
 #ifdef ARCH_HAS_PREFETCHW
 #define prefetchw_prev_lru_page(_page, _base, _field)			\
@@ -165,13 +165,13 @@ struct scan_control {
  */
 int vm_swappiness = 60;
 
-#if defined(VENDOR_EDIT) && defined(CONFIG_OPPO_ZRAM_OPT)
-//yixue.ge@psw.bsp.kernel 20170720 add for add direct_vm_swappiness
+#ifdef CONFIG_OPLUS_MM_HACKS
 /*
- * Direct reclaim swappiness, exptct 0 - 60. Higher means more swappy and slower.
+ * Direct reclaim swappiness, values range from 0 .. 60. Higher means more swappy.
  */
 int direct_vm_swappiness = 60;
-#endif
+#endif /* CONFIG_OPLUS_MM_HACKS */
+
 /*
  * The total number of pages which are beyond the high watermark within all
  * zones.
@@ -180,22 +180,6 @@ unsigned long vm_total_pages;
 
 static LIST_HEAD(shrinker_list);
 static DECLARE_RWSEM(shrinker_rwsem);
-
-#ifdef VENDOR_EDIT
-static ATOMIC_NOTIFIER_HEAD(balance_pg_notifier);
-
-int balance_pg_register_notifier(struct notifier_block *nb)
-{
-	return atomic_notifier_chain_register(&balance_pg_notifier, nb);
-}
-EXPORT_SYMBOL(balance_pg_register_notifier);
-
-int balance_pg_unregister_notifier(struct notifier_block *nb)
-{
-	return atomic_notifier_chain_unregister(&balance_pg_notifier, nb);
-}
-EXPORT_SYMBOL(balance_pg_unregister_notifier);
-#endif
 
 #ifdef CONFIG_MEMCG
 static bool global_reclaim(struct scan_control *sc)
@@ -1012,11 +996,6 @@ static unsigned long shrink_page_list(struct list_head *page_list,
 		bool lazyfree = false;
 		int ret = SWAP_SUCCESS;
 
-#ifdef CONFIG_PROCESS_RECLAIM_ENHANCE
-		/* check whether the reclaim process should cancel */
-		if (sc->walk && is_reclaim_should_cancel(sc->walk))
-			break;
-#endif
 		cond_resched();
 
 		page = lru_to_page(page_list);
@@ -1409,14 +1388,8 @@ unsigned long reclaim_clean_pages_from_list(struct zone *zone,
 }
 
 #ifdef CONFIG_PROCESS_RECLAIM
-#ifdef CONFIG_PROCESS_RECLAIM_ENHANCE
-/* record the scaned task */
-unsigned long reclaim_pages_from_list(struct list_head *page_list,
-			struct vm_area_struct *vma, struct mm_walk *walk)
-#else
 unsigned long reclaim_pages_from_list(struct list_head *page_list,
 					struct vm_area_struct *vma)
-#endif
 {
 	struct scan_control sc = {
 		.gfp_mask = GFP_KERNEL,
@@ -1425,10 +1398,6 @@ unsigned long reclaim_pages_from_list(struct list_head *page_list,
 		.may_unmap = 1,
 		.may_swap = 1,
 		.target_vma = vma,
-#ifdef CONFIG_PROCESS_RECLAIM_ENHANCE
-		/* record the scaned task*/
-		.walk = walk,
-#endif
 	};
 
 	unsigned long nr_reclaimed;
@@ -1685,13 +1654,7 @@ int isolate_lru_page(struct page *page)
 	int ret = -EBUSY;
 
 	VM_BUG_ON_PAGE(!page_count(page), page);
-#ifdef CONFIG_PROCESS_RECLAIM_ENHANCE
-	/* Because process reclaim is doing page by
-	 * page, so there many compound pages are relcaimed, so too many warning msg on this case. */
-	WARN_RATELIMIT((!current_is_reclaimer() && PageTail(page)), "trying to isolate tail page");
-#else
 	WARN_RATELIMIT(PageTail(page), "trying to isolate tail page");
-#endif
 
 	if (PageLRU(page)) {
 		struct zone *zone = page_zone(page);
@@ -1838,14 +1801,10 @@ putback_inactive_pages(struct lruvec *lruvec, struct list_head *page_list)
  */
 static int current_may_throttle(void)
 {
-#if defined(VENDOR_EDIT) && defined(CONFIG_OPPO_ZRAM_OPT)
-	if ((current->signal->oom_score_adj < 0)
-#ifdef CONFIG_FG_TASK_UID
-		|| is_fg(current_uid().val)
-#endif
-	   )
+#ifdef CONFIG_OPLUS_MM_HACKS
+	if ((current->signal->oom_score_adj < 0))
 		return 0;
-#endif /*VENDOR_EDIT*/
+#endif /* CONFIG_OPLUS_MM_HACKS */
 	return !(current->flags & PF_LESS_THROTTLE) ||
 		current->backing_dev_info == NULL ||
 		bdi_write_congested(current->backing_dev_info);
@@ -1874,23 +1833,6 @@ static bool inactive_reclaimable_pages(struct lruvec *lruvec,
 
 	return false;
 }
-
-#ifdef VENDOR_EDIT
-extern bool is_fg(int uid);
-static inline int get_current_adj(void)
-{
-	int cur_uid;
-
-	if (current->signal->oom_score_adj < 0)
-		return 0;
-#ifdef CONFIG_OPPO_FG_OPT
-	cur_uid = current_uid().val;
-	if (is_fg(cur_uid))
-		return 0;
-#endif
-	return current->signal->oom_score_adj;
-}
-#endif /*VENDOR*/
 
 /*
  * shrink_inactive_list() is a helper for shrink_node().  It returns the number
@@ -2037,13 +1979,8 @@ shrink_inactive_list(unsigned long nr_to_scan, struct lruvec *lruvec,
 	 * is congested. Allow kswapd to continue until it starts encountering
 	 * unqueued dirty pages or cycling through the LRU too quickly.
 	 */
-#ifdef VENDOR_EDIT
-	if (!sc->hibernation_mode && !current_is_kswapd() &&
-	    current_may_throttle() && get_current_adj())
-#else
 	if (!sc->hibernation_mode && !current_is_kswapd() &&
 	    current_may_throttle())
-#endif
 		wait_iff_congested(pgdat, BLK_RW_ASYNC, HZ/10);
 
 	trace_mm_vmscan_lru_shrink_inactive(pgdat->node_id,
@@ -2254,13 +2191,14 @@ static bool inactive_list_is_low(struct lruvec *lruvec, bool file,
 	active = lruvec_lru_size(lruvec, active_lru, sc->reclaim_idx);
 
 	gb = (inactive + active) >> (30 - PAGE_SHIFT);
-#if defined(VENDOR_EDIT) && defined(CONFIG_OPPO_ZRAM_OPT)
-	if (gb && file)
-		inactive_ratio = min(2UL, int_sqrt(10 * gb));
+
+#ifdef CONFIG_OPLUS_MM_HACKS
+		if (file && gb)
+                        inactive_ratio = min(2UL, int_sqrt(10 * gb));
 #else
 	if (gb)
 		inactive_ratio = int_sqrt(10 * gb);
-#endif /*VENDOR_EDIT*/
+#endif /* CONFIG_OPLUS_MM_HACKS */
 	else
 		inactive_ratio = 1;
 
@@ -2277,6 +2215,54 @@ static unsigned long shrink_list(enum lru_list lru, unsigned long nr_to_scan,
 	}
 
 	return shrink_inactive_list(nr_to_scan, lruvec, sc, lru);
+}
+
+static void prepare_workingset_protection(pg_data_t *pgdat, struct scan_control *sc)
+{
+	/*
+	 * Check the number of anonymous pages to protect them from
+	 * reclaiming if their amount is below the specified.
+	 */
+	if (sysctl_anon_min_kbytes) {
+		unsigned long reclaimable_anon;
+
+		reclaimable_anon =
+			node_page_state(pgdat, NR_ACTIVE_ANON) +
+			node_page_state(pgdat, NR_INACTIVE_ANON) +
+			node_page_state(pgdat, NR_ISOLATED_ANON);
+		reclaimable_anon <<= (PAGE_SHIFT - 10);
+
+		sc->anon_below_min = reclaimable_anon < sysctl_anon_min_kbytes;
+	} else
+		sc->anon_below_min = 0;
+
+	/*
+	 * Check the number of clean file pages to protect them from
+	 * reclaiming if their amount is below the specified.
+	 */
+	if (sysctl_clean_low_kbytes || sysctl_clean_min_kbytes) {
+		unsigned long reclaimable_file, dirty, clean;
+
+		reclaimable_file =
+			node_page_state(pgdat, NR_ACTIVE_FILE) +
+			node_page_state(pgdat, NR_INACTIVE_FILE) +
+			node_page_state(pgdat, NR_ISOLATED_FILE);
+		dirty = node_page_state(pgdat, NR_FILE_DIRTY);
+		/*
+		 * node_page_state() sum can go out of sync since
+		 * all the values are not read at once.
+		 */
+		if (likely(reclaimable_file > dirty))
+			clean = (reclaimable_file - dirty) << (PAGE_SHIFT - 10);
+		else
+			clean = 0;
+
+		sc->clean_below_low = clean < sysctl_clean_low_kbytes;
+		sc->clean_below_min = clean < sysctl_clean_min_kbytes;
+	} else {
+		sc->clean_below_low = 0;
+		sc->clean_below_min = 0;
+	}
 }
 
 enum scan_balance {
@@ -2309,17 +2295,20 @@ static void get_scan_count(struct lruvec *lruvec, struct mem_cgroup *memcg,
 	unsigned long anon, file;
 	unsigned long ap, fp;
 	enum lru_list lru;
+#ifdef CONFIG_OPLUS_MM_HACKS
+	unsigned long totalswap = total_swap_pages;
+#endif /* CONFIG_OPLUS_MM_HACKS */
 
-#if defined(VENDOR_EDIT) && defined(CONFIG_OPPO_ZRAM_OPT)
-//yixue.ge@psw.bsp.kernel.driver 20170810 modify for reserver some zram disk size
+#ifdef CONFIG_OPLUS_MM_HACKS
 	if (!current_is_kswapd())
 		swappiness = direct_vm_swappiness;
-	
-	if (!sc->may_swap || (mem_cgroup_get_nr_swap_pages(memcg) <= total_swap_pages>>6)) {
+	if (!sc->may_swap || (mem_cgroup_get_nr_swap_pages(memcg) <= totalswap>>6)) {
 #else
+	prepare_workingset_protection(pgdat, sc);
+
 	/* If we have no swap space, do not bother scanning anon pages. */
 	if (!sc->may_swap || mem_cgroup_get_nr_swap_pages(memcg) <= 0) {
-#endif
+#endif /* CONFIG_OPLUS_MM_HACKS */
 		scan_balance = SCAN_FILE;
 		goto out;
 	}
@@ -2377,6 +2366,15 @@ static void get_scan_count(struct lruvec *lruvec, struct mem_cgroup *memcg,
 			scan_balance = SCAN_ANON;
 			goto out;
 		}
+	}
+
+	/*
+	Force-scan anon if clean file pages is under vm.clean_low_kbytes
+	 * or vm.clean_min_kbytes.
+	 */
+	if (sc->clean_below_low || sc->clean_below_min) {
+		scan_balance = SCAN_ANON;
+		goto out;
 	}
 
 	/*
@@ -2488,18 +2486,29 @@ out:
 			BUG();
 		}
 
+		/*
+		 * Hard protection of the working set.
+		 */
+		if (file) {
+			/*
+			 * Don't reclaim file pages when the amount of
+			 * clean file pages is below vm.clean_min_kbytes.
+			 */
+			if (sc->clean_below_min)
+				scan = 0;
+		} else {
+			/*
+			 * Don't reclaim anonymous pages when their
+			 * amount is below vm.anon_min_kbytes.
+			 */
+			if (sc->anon_below_min)
+				scan = 0;
+		}
+
 		*lru_pages += size;
 		nr[lru] = scan;
 	}
 }
-
-#ifdef VENDOR_EDIT
-/*Huacai.Zhou@PSW.BSP.Kernel.MM 20171227 modify for filelru first */
-#define for_each_evictable_lru_file(lru) for (lru = LRU_INACTIVE_FILE; lru <= LRU_ACTIVE_FILE; lru++)
-#define for_each_evictable_lru_anon(lru) for (lru = LRU_INACTIVE_ANON; lru <= LRU_ACTIVE_ANON; lru++)
-static unsigned  int swap_max_ratio = 1;
-module_param_named(swap_max_ratio, swap_max_ratio, uint, S_IRUGO | S_IWUSR);
-#endif /*VENDOR_EDIT*/
 
 /*
  * This is a basic per-node page freer.  Used by both kswapd and direct reclaim.
@@ -2542,27 +2551,6 @@ static void shrink_node_memcg(struct pglist_data *pgdat, struct mem_cgroup *memc
 		unsigned long nr_anon, nr_file, percentage;
 		unsigned long nr_scanned;
 
-#ifdef VENDOR_EDIT
-/*Huacai.Zhou@PSW.BSP.Kernel.MM 20171227 modify for filelru first */
-		for_each_evictable_lru_file(lru) {
-			if (nr[lru]) {
-				nr_to_scan = min(nr[lru], SWAP_CLUSTER_MAX);
-				nr[lru] -= nr_to_scan;
-
-				nr_reclaimed += shrink_list(lru, nr_to_scan,
-								lruvec, sc);
-			}
-		}
-		for_each_evictable_lru_anon(lru) {
-			if (nr[lru]) {
-				nr_to_scan = min(nr[lru], SWAP_CLUSTER_MAX);
-				nr[lru] -= nr_to_scan;
-
-				nr_reclaimed += shrink_list(lru, nr_to_scan,
-								lruvec, sc);
-			}
-		}
-#else
 		for_each_evictable_lru(lru) {
 			if (nr[lru]) {
 				nr_to_scan = min(nr[lru], SWAP_CLUSTER_MAX);
@@ -2572,7 +2560,6 @@ static void shrink_node_memcg(struct pglist_data *pgdat, struct mem_cgroup *memc
 							    lruvec, sc);
 			}
 		}
-#endif /*VENDOR_EDIT*/
 		cond_resched();
 
 		if (nr_reclaimed < nr_to_reclaim || scan_adjusted)
@@ -3175,11 +3162,6 @@ unsigned long try_to_free_pages(struct zonelist *zonelist, int order,
 		.may_unmap = 1,
 		.may_swap = 1,
 	};
-	
-#ifdef VENDOR_EDIT
-/*Huacai.Zhou@PSW.BSP.Kernel.MM 2018-08-30 increase nr_to_reclaim*/
-	sc.nr_to_reclaim = SWAP_CLUSTER_MAX  <<  swap_max_ratio;
-#endif /*VENDOR_EDIT*/
 
 	/*
 	 * Do not enter reclaim if fatal signal was delivered while throttled.

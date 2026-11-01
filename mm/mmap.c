@@ -52,9 +52,6 @@
 #include <asm/mmu_context.h>
 
 #include "internal.h"
-#if defined(OPLUS_FEATURE_VIRTUAL_RESERVE_MEMORY) && defined(CONFIG_VIRTUAL_RESERVE_MEMORY)
-#include <linux/reserve_area.h>
-#endif
 
 #ifndef arch_mmap_check
 #define arch_mmap_check(addr, len, flags)	(0)
@@ -1501,8 +1498,12 @@ unsigned long do_mmap(struct file *file, unsigned long addr,
 
 		switch (flags & MAP_TYPE) {
 		case MAP_SHARED:
-			if ((prot&PROT_WRITE) && !(file->f_mode&FMODE_WRITE))
-				return -EACCES;
+			if (prot & PROT_WRITE) {
+				if (!(file->f_mode & FMODE_WRITE))
+					return -EACCES;
+				if (IS_SWAPFILE(file->f_mapping->host))
+					return -ETXTBSY;
+			}
 
 			/*
 			 * Make sure we don't allow writing to an append-only
@@ -1995,9 +1996,6 @@ unsigned long unmapped_area_topdown(struct vm_unmapped_area_info *info)
 	length = info->length + info->align_mask;
 	if (length < info->length)
 		return -ENOMEM;
-#if defined(OPLUS_FEATURE_VIRTUAL_RESERVE_MEMORY) && defined(CONFIG_VIRTUAL_RESERVE_MEMORY)
-	GET_UNMMPAED_AREA_FROME_ANTI_FRAGMENT(info, mm);
-#endif
 	/*
 	 * Adjust search limits by the desired length.
 	 * See implementation comment at top of unmapped_area().
@@ -2166,10 +2164,6 @@ arch_get_unmapped_area_topdown(struct file *filp, const unsigned long addr0,
 	info.flags = VM_UNMAPPED_AREA_TOPDOWN;
 	info.length = len;
 	info.low_limit = max(PAGE_SIZE, mmap_min_addr);
-#if defined(OPLUS_FEATURE_VIRTUAL_RESERVE_MEMORY) && defined(CONFIG_VIRTUAL_RESERVE_MEMORY)
-	/* get unmmaped area first time, update the low limit */
-	GET_UNMMAPED_AREA_FIRST_TIME(info);
-#endif
 	info.high_limit = mm->mmap_base;
 	info.align_mask = 0;
 	info.align_offset = 0;
@@ -2188,10 +2182,6 @@ arch_get_unmapped_area_topdown(struct file *filp, const unsigned long addr0,
 		info.high_limit = TASK_SIZE;
 		addr = vm_unmapped_area(&info);
 	}
-#if defined(OPLUS_FEATURE_VIRTUAL_RESERVE_MEMORY) && defined(CONFIG_VIRTUAL_RESERVE_MEMORY)
-	/* get unmmaped area third time */
-	GET_UNMMAPED_AREA_THIRD_TIME(info, mm, addr);
-#endif
 	return addr;
 }
 #endif

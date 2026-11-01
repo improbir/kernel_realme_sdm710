@@ -206,7 +206,7 @@ static struct sock *udp6_lib_lookup2(struct net *net,
 struct sock *__udp6_lib_lookup(struct net *net,
 				      const struct in6_addr *saddr, __be16 sport,
 				      const struct in6_addr *daddr, __be16 dport,
-				      int dif, struct udp_table *udptable,
+				      int dif, int sdif, struct udp_table *udptable,
 				      struct sk_buff *skb)
 {
 	struct sock *sk, *result;
@@ -281,7 +281,7 @@ static struct sock *__udp6_lib_lookup_skb(struct sk_buff *skb,
 
 	return __udp6_lib_lookup(dev_net(skb->dev), &iph->saddr, sport,
 				 &iph->daddr, dport, inet6_iif(skb),
-				 udptable, skb);
+				 inet6_sdif(skb), udptable, skb);
 }
 
 struct sock *udp6_lib_lookup_skb(struct sk_buff *skb,
@@ -291,7 +291,7 @@ struct sock *udp6_lib_lookup_skb(struct sk_buff *skb,
 
 	return __udp6_lib_lookup(dev_net(skb->dev), &iph->saddr, sport,
 				 &iph->daddr, dport, inet6_iif(skb),
-				 &udp_table, NULL);
+				 0,&udp_table, NULL);
 }
 EXPORT_SYMBOL_GPL(udp6_lib_lookup_skb);
 
@@ -306,7 +306,7 @@ struct sock *udp6_lib_lookup(struct net *net, const struct in6_addr *saddr, __be
 	struct sock *sk;
 
 	sk =  __udp6_lib_lookup(net, saddr, sport, daddr, dport,
-				dif, &udp_table, NULL);
+				dif, 0,&udp_table, NULL);
 	if (sk && !atomic_inc_not_zero(&sk->sk_refcnt))
 		sk = NULL;
 	return sk;
@@ -476,7 +476,7 @@ void __udp6_lib_err(struct sk_buff *skb, struct inet6_skb_parm *opt,
 	struct net *net = dev_net(skb->dev);
 
 	sk = __udp6_lib_lookup(net, daddr, uh->dest, saddr, uh->source,
-			       inet6_iif(skb), udptable, NULL);
+			       inet6_iif(skb), 0,udptable, NULL);
 	if (!sk) {
 		__ICMP6_INC_STATS(net, __in6_dev_get(skb->dev),
 				  ICMP6_MIB_INERRORS);
@@ -890,7 +890,7 @@ static struct sock *__udp6_lib_demux_lookup(struct net *net,
 					    const struct in6_addr *loc_addr,
 					    __be16 rmt_port,
 					    const struct in6_addr *rmt_addr,
-					    int dif)
+					    int dif , int sdif)
 {
 	unsigned short hnum = ntohs(loc_port);
 	unsigned int hash2 = udp6_portaddr_hash(net, loc_addr, hnum);
@@ -902,7 +902,7 @@ static struct sock *__udp6_lib_demux_lookup(struct net *net,
 
 	udp_portaddr_for_each_entry_rcu(sk, &hslot2->head) {
 		if (sk->sk_state == TCP_ESTABLISHED &&
-		    INET6_MATCH(sk, net, rmt_addr, loc_addr, ports, dif))
+		    INET6_MATCH(sk, net, rmt_addr, loc_addr, ports, dif, sdif))
 			return sk;
 		/* Only check first socket in chain */
 		break;
@@ -917,6 +917,7 @@ static void udp_v6_early_demux(struct sk_buff *skb)
 	struct sock *sk;
 	struct dst_entry *dst;
 	int dif = skb->dev->ifindex;
+	int sdif = inet6_sdif(skb);
 
 	if (!pskb_may_pull(skb, skb_transport_offset(skb) +
 	    sizeof(struct udphdr)))
@@ -928,7 +929,7 @@ static void udp_v6_early_demux(struct sk_buff *skb)
 		sk = __udp6_lib_demux_lookup(net, uh->dest,
 					     &ipv6_hdr(skb)->daddr,
 					     uh->source, &ipv6_hdr(skb)->saddr,
-					     dif);
+					     dif, sdif);
 	else
 		return;
 
@@ -969,6 +970,25 @@ static void udp_v6_flush_pending_frames(struct sock *sk)
 		up->pending = 0;
 		ip6_flush_pending_frames(sk);
 	}
+}
+
+static int udpv6_pre_connect(struct sock *sk, struct sockaddr *uaddr,
+			     int addr_len)
+{
+	/* The following checks are replicated from __ip6_datagram_connect()
+	 * and intended to prevent BPF program called below from accessing
+	 * bytes that are out of the bound specified by user in addr_len.
+	 */
+	if (uaddr->sa_family == AF_INET) {
+		if (__ipv6_only_sock(sk))
+			return -EAFNOSUPPORT;
+		return udp_pre_connect(sk, uaddr, addr_len);
+	}
+
+	if (addr_len < SIN6_LEN_RFC2133)
+		return -EINVAL;
+
+	return BPF_CGROUP_RUN_PROG_INET6_CONNECT_LOCK(sk, uaddr);
 }
 
 /**
@@ -1525,6 +1545,7 @@ struct proto udpv6_prot = {
 	.name		   = "UDPv6",
 	.owner		   = THIS_MODULE,
 	.close		   = udp_lib_close,
+	.pre_connect	   = udpv6_pre_connect,
 	.connect	   = ip6_datagram_connect,
 	.disconnect	   = udp_disconnect,
 	.ioctl		   = udp_ioctl,
