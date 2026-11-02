@@ -1482,7 +1482,7 @@ retry:
 		if (i + 1 < dpolicy->granularity)
 			break;
 
-		if (i + 1 < DEFAULT_DISCARD_GRANULARITY && dpolicy->ordered)
+		if (i < DEFAULT_DISCARD_GRANULARITY && dpolicy->ordered)
 			return __issue_discard_cmd_orderly(sbi, dpolicy);
 
 		pend_list = &dcc->pend_list[i];
@@ -3290,9 +3290,6 @@ int f2fs_inplace_write_data(struct f2fs_io_info *fio)
 			  __func__, segno);
 		return -EFSCORRUPTED;
 	}
-
-	invalidate_mapping_pages(META_MAPPING(sbi),
-				fio->new_blkaddr, fio->new_blkaddr);
 
 	stat_inc_inplace_blocks(fio->sbi);
 

@@ -82,6 +82,74 @@ static struct notifier_block panic_block = {
 	.notifier_call = hung_task_panic,
 };
 
+static void check_hung_task(struct task_struct *t, unsigned long timeout)
+{
+	unsigned long switch_count = t->nvcsw + t->nivcsw;
+
+#ifdef VENDOR_EDIT
+	#define DISP_TASK_COMM_LEN_MASK 10 //SDM845 change the new display thread with multi output, use len for masking
+	if(!strncmp(t->comm,"mdss_dsi_event", TASK_COMM_LEN)||
+		!strncmp(t->comm,"msm-core:sampli", TASK_COMM_LEN)||
+		!strncmp(t->comm,"kworker/u16:1", TASK_COMM_LEN) ||
+		!strncmp(t->comm,"mdss_fb0", TASK_COMM_LEN)||
+		!strncmp(t->comm,"mdss_fb_ffl0", TASK_COMM_LEN)||
+		!strncmp(t->comm,"panic_flush", TASK_COMM_LEN)||
+		!strncmp(t->comm,"crtc_commit", DISP_TASK_COMM_LEN_MASK)||
+		!strncmp(t->comm,"crtc_event", DISP_TASK_COMM_LEN_MASK)){
+		return;
+	}
+	#endif
+	/*
+	 * Ensure the task is not frozen.
+	 * Also, skip vfork and any other user process that freezer should skip.
+	 */
+	if (unlikely(t->flags & (PF_FROZEN | PF_FREEZER_SKIP)))
+	    return;
+
+	/*
+	 * When a freshly created task is scheduled once, changes its state to
+	 * TASK_UNINTERRUPTIBLE without having ever been switched out once, it
+	 * musn't be checked.
+	 */
+	if (unlikely(!switch_count))
+		return;
+
+	if (switch_count != t->last_switch_count) {
+		t->last_switch_count = switch_count;
+		return;
+	}
+
+	trace_sched_process_hang(t);
+
+	if (!sysctl_hung_task_warnings && !sysctl_hung_task_panic)
+		return;
+
+	/*
+	 * Ok, the task did not get scheduled for more than 2 minutes,
+	 * complain:
+	 */
+	if (sysctl_hung_task_warnings) {
+		sysctl_hung_task_warnings--;
+		pr_err("INFO: task %s:%d blocked for more than %ld seconds.\n",
+			t->comm, t->pid, timeout);
+		pr_err("      %s %s %.*s\n",
+			print_tainted(), init_utsname()->release,
+			(int)strcspn(init_utsname()->version, " "),
+			init_utsname()->version);
+		pr_err("\"echo 0 > /proc/sys/kernel/hung_task_timeout_secs\""
+			" disables this message.\n");
+		sched_show_task(t);
+		debug_show_all_locks();
+	}
+
+	touch_nmi_watchdog();
+
+	if (sysctl_hung_task_panic) {
+		trigger_all_cpu_backtrace();
+		panic("hung_task: blocked tasks");
+	}
+}
+
 /*
  * To avoid extending the RCU grace period for an unbounded amount of time,
  * periodically exit the critical section and enter a new one.
