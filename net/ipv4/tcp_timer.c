@@ -206,11 +206,10 @@ static void tcp_mtu_probing(struct inet_connection_sock *icsk, struct sock *sk)
  */
 static bool retransmits_timed_out(struct sock *sk,
 				  unsigned int boundary,
-				  unsigned int timeout,
-				  bool syn_set)
+				  unsigned int timeout)
 {
+    const unsigned int rto_base = TCP_RTO_MIN;
 	unsigned int linear_backoff_thresh, start_ts;
-	unsigned int rto_base = syn_set ? TCP_TIMEOUT_INIT : TCP_RTO_MIN;
 
 	if (!inet_csk(sk)->icsk_retransmits)
 		return false;
@@ -236,9 +235,9 @@ static int tcp_write_timeout(struct sock *sk)
 {
 	struct inet_connection_sock *icsk = inet_csk(sk);
 	struct tcp_sock *tp = tcp_sk(sk);
+	bool expired, do_reset;
 	struct net *net = sock_net(sk);
 	int retry_until;
-	bool do_reset, syn_set = false;
 
 	if ((1 << sk->sk_state) & (TCPF_SYN_SENT | TCPF_SYN_RECV)) {
 		if (icsk->icsk_retransmits) {
@@ -252,9 +251,8 @@ static int tcp_write_timeout(struct sock *sk)
 			sk_rethink_txhash(sk);
 		}
 		retry_until = icsk->icsk_syn_retries ? : net->ipv4.sysctl_tcp_syn_retries;
-		syn_set = true;
 	} else {
-		if (retransmits_timed_out(sk, net->ipv4.sysctl_tcp_retries1, 0, 0)) {
+		if (retransmits_timed_out(sk, net->ipv4.sysctl_tcp_retries1, 0)) {
 			/* Some middle-boxes may black-hole Fast Open _after_
 			 * the handshake. Therefore we conservatively disable
 			 * Fast Open on this path on recurring timeouts with
@@ -281,19 +279,26 @@ static int tcp_write_timeout(struct sock *sk)
 
 			retry_until = tcp_orphan_retries(sk, alive);
 			do_reset = alive ||
-				!retransmits_timed_out(sk, retry_until, 0, 0);
+				!retransmits_timed_out(sk, retry_until, 0);
 
 			if (tcp_out_of_resources(sk, do_reset))
 				return 1;
 		}
+		expired = retransmits_timed_out(sk, retry_until,
+						icsk->icsk_user_timeout);
 	}
 
-	if (retransmits_timed_out(sk, retry_until,
-				  syn_set ? 0 : icsk->icsk_user_timeout, syn_set)) {
+	if (BPF_SOCK_OPS_TEST_FLAG(tp, BPF_SOCK_OPS_RTO_CB_FLAG))
+		tcp_call_bpf_3arg(sk, BPF_SOCK_OPS_RTO_CB,
+				  icsk->icsk_retransmits,
+				  icsk->icsk_rto, (int)expired);
+
+	if (expired) {
 		/* Has it gone just too far? */
 		tcp_write_err(sk);
 		return 1;
 	}
+
 	return 0;
 }
 
@@ -467,6 +472,7 @@ void tcp_retransmit_timer(struct sock *sk)
 	struct tcp_sock *tp = tcp_sk(sk);
 	struct net *net = sock_net(sk);
 	struct inet_connection_sock *icsk = inet_csk(sk);
+	struct sk_buff *skb;
 
 	if (tp->fastopen_rsk) {
 		WARN_ON_ONCE(sk->sk_state != TCP_SYN_RECV &&
@@ -477,10 +483,13 @@ void tcp_retransmit_timer(struct sock *sk)
 		 */
 		return;
 	}
-	if (!tp->packets_out)
-		goto out;
 
-	WARN_ON(tcp_write_queue_empty(sk));
+	if (!tp->packets_out)
+		return;
+
+	skb = tcp_rtx_queue_head(sk);
+	if (WARN_ON_ONCE(!skb))
+		return;
 
 	tp->tlp_high_seq = 0;
 
@@ -513,7 +522,7 @@ void tcp_retransmit_timer(struct sock *sk)
 			goto out;
 		}
 		tcp_enter_loss(sk);
-		tcp_retransmit_skb(sk, tcp_write_queue_head(sk), 1);
+		tcp_retransmit_skb(sk, skb, 1);
 		__sk_dst_reset(sk);
 		goto out_reset_timer;
 	}
@@ -594,7 +603,7 @@ out_reset_timer:
 		icsk->icsk_rto = min(icsk->icsk_rto << 1, TCP_RTO_MAX);
 	}
 	inet_csk_reset_xmit_timer(sk, ICSK_TIME_RETRANS, icsk->icsk_rto, TCP_RTO_MAX);
-	if (retransmits_timed_out(sk, net->ipv4.sysctl_tcp_retries1 + 1, 0, 0))
+	if (retransmits_timed_out(sk, net->ipv4.sysctl_tcp_retries1 + 1, 0))
 		__sk_dst_reset(sk);
 
 out:;
@@ -765,4 +774,7 @@ void tcp_init_xmit_timers(struct sock *sk)
 {
 	inet_csk_init_xmit_timers(sk, &tcp_write_timer, &tcp_delack_timer,
 				  &tcp_keepalive_timer);
+	hrtimer_init(&tcp_sk(sk)->pacing_timer, CLOCK_MONOTONIC,
+		     HRTIMER_MODE_ABS_PINNED);
+	tcp_sk(sk)->pacing_timer.function = tcp_pace_kick;
 }

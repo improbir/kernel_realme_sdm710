@@ -241,6 +241,25 @@ static inline void *sg_virt(struct scatterlist *sg)
 	return page_address(sg_page(sg)) + sg->offset;
 }
 
+
+/**
+ * sg_init_marker - Initialize markers in sg table
+ * @sgl:	   The SG table
+ * @nents:	   Number of entries in table
+ *
+ **/
+static inline void sg_init_marker(struct scatterlist *sgl,
+				  unsigned int nents)
+{
+#ifdef CONFIG_DEBUG_SG
+	unsigned int i;
+
+	for (i = 0; i < nents; i++)
+		sgl[i].sg_magic = SG_MAGIC;
+#endif
+	sg_mark_end(&sgl[nents - 1]);
+}
+
 int sg_nents(struct scatterlist *sg);
 int sg_nents_for_len(struct scatterlist *sg, u64 len);
 struct scatterlist *sg_next(struct scatterlist *);
@@ -265,6 +284,16 @@ int sg_alloc_table_from_pages(struct sg_table *sgt,
 	struct page **pages, unsigned int n_pages,
 	unsigned long offset, unsigned long size,
 	gfp_t gfp_mask);
+
+#ifdef CONFIG_SGL_ALLOC
+struct scatterlist *sgl_alloc_order(unsigned long long length,
+				    unsigned int order, bool chainable,
+				    gfp_t gfp, unsigned int *nent_p);
+struct scatterlist *sgl_alloc(unsigned long long length, gfp_t gfp,
+			      unsigned int *nent_p);
+void sgl_free_order(struct scatterlist *sgl, int order);
+void sgl_free(struct scatterlist *sgl);
+#endif /* CONFIG_SGL_ALLOC */
 
 size_t sg_copy_buffer(struct scatterlist *sgl, unsigned int nents, void *buf,
 		      size_t buflen, off_t skip, bool to_buffer);

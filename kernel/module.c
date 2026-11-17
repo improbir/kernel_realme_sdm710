@@ -2884,7 +2884,7 @@ static int copy_module_from_user(const void __user *umod, unsigned long len,
 
 	/* Suck in entire file: we'll want most of it. */
 	info->hdr = __vmalloc(info->len,
-			GFP_KERNEL | __GFP_HIGHMEM | __GFP_NOWARN, PAGE_KERNEL);
+			GFP_KERNEL | __GFP_NOWARN, PAGE_KERNEL);
 	if (!info->hdr)
 		return -ENOMEM;
 
@@ -3086,6 +3086,11 @@ static int find_module_sections(struct module *mod, struct load_info *info)
 	mod->tracepoints_ptrs = section_objs(info, "__tracepoints_ptrs",
 					     sizeof(*mod->tracepoints_ptrs),
 					     &mod->num_tracepoints);
+#endif
+#ifdef CONFIG_BPF_EVENTS
+	mod->bpf_raw_events = section_objs(info, "__bpf_raw_tp_map",
+					   sizeof(*mod->bpf_raw_events),
+					   &mod->num_bpf_raw_events);
 #endif
 #ifdef HAVE_JUMP_LABEL
 	mod->jump_entries = section_objs(info, "__jump_table",
@@ -4175,6 +4180,7 @@ static int m_show(struct seq_file *m, void *p)
 {
 	struct module *mod = list_entry(p, struct module, list);
 	char buf[8];
+	unsigned long value;
 
 	/* We always ignore unformed modules. */
 	if (mod->state == MODULE_STATE_UNFORMED)
@@ -4190,7 +4196,8 @@ static int m_show(struct seq_file *m, void *p)
 		   mod->state == MODULE_STATE_COMING ? "Loading" :
 		   "Live");
 	/* Used by oprofile and other similar tools. */
-	seq_printf(m, " 0x%pK", mod->core_layout.base);
+	value = m->private ? 0 : (unsigned long)mod->core_layout.base;
+	seq_printf(m, " 0x" KALLSYM_FMT, value);
 
 	/* Taints info */
 	if (mod->taints)
@@ -4212,9 +4219,23 @@ static const struct seq_operations modules_op = {
 	.show	= m_show
 };
 
+/*
+ * This also sets the "private" pointer to non-NULL if the
+ * kernel pointers should be hidden (so you can just test
+ * "m->private" to see if you should keep the values private).
+ *
+ * We use the same logic as for /proc/kallsyms.
+ */
 static int modules_open(struct inode *inode, struct file *file)
 {
-	return seq_open(file, &modules_op);
+	int err = seq_open(file, &modules_op);
+
+	if (!err) {
+		struct seq_file *m = file->private_data;
+		m->private = kallsyms_show_value() ? NULL : (void *)8ul;
+	}
+
+	return 0;
 }
 
 static const struct file_operations proc_modules_operations = {

@@ -81,7 +81,6 @@
 #include <linux/kcov.h>
 #include <linux/cpufreq_times.h>
 #include <linux/simple_lmk.h>
-#include <linux/devfreq_boost.h>
 
 #include <asm/pgtable.h>
 #include <asm/pgalloc.h>
@@ -203,7 +202,7 @@ static unsigned long *alloc_thread_stack_node(struct task_struct *tsk, int node)
 
 	stack = __vmalloc_node_range(THREAD_SIZE, THREAD_SIZE,
 				     VMALLOC_START, VMALLOC_END,
-				     THREADINFO_GFP | __GFP_HIGHMEM,
+				     THREADINFO_GFP,
 				     PAGE_KERNEL,
 				     0, node, __builtin_return_address(0));
 
@@ -423,10 +422,10 @@ static void set_max_threads(unsigned int max_threads_suggested)
 	 * The number of threads shall be limited such that the thread
 	 * structures may only consume a small part of the available memory.
 	 */
-	if (fls64(totalram_pages) + fls64(PAGE_SIZE) > 64)
+	if (fls64(totalram_pages()) + fls64(PAGE_SIZE) > 64)
 		threads = MAX_THREADS;
 	else
-		threads = div64_u64((u64) totalram_pages * (u64) PAGE_SIZE,
+		threads = div64_u64((u64) totalram_pages() * (u64) PAGE_SIZE,
 				    (u64) THREAD_SIZE * 8UL);
 
 	if (threads > max_threads_suggested)
@@ -632,7 +631,12 @@ static __latent_entropy int dup_mmap(struct mm_struct *mm,
 		if (retval)
 			goto fail_nomem_policy;
 		tmp->vm_mm = mm;
-		if (anon_vma_fork(tmp, mpnt))
+		if (tmp->vm_flags & VM_WIPEONFORK) {
+			/* VM_WIPEONFORK gets a clean slate in the child. */
+			tmp->anon_vma = NULL;
+			if (anon_vma_prepare(tmp))
+				goto fail_nomem_anon_vma_fork;
+		} else if (anon_vma_fork(tmp, mpnt))
 			goto fail_nomem_anon_vma_fork;
 		tmp->vm_flags &=
 			~(VM_LOCKED|VM_LOCKONFAULT|VM_UFFD_MISSING|VM_UFFD_WP);
@@ -678,7 +682,8 @@ static __latent_entropy int dup_mmap(struct mm_struct *mm,
 		rb_parent = &tmp->vm_rb;
 
 		mm->map_count++;
-		retval = copy_page_range(mm, oldmm, mpnt);
+		if (!(tmp->vm_flags & VM_WIPEONFORK))
+			retval = copy_page_range(mm, oldmm, mpnt);
 
 		if (tmp->vm_ops && tmp->vm_ops->open)
 			tmp->vm_ops->open(tmp);
@@ -777,11 +782,6 @@ static struct mm_struct *mm_init(struct mm_struct *mm, struct task_struct *p,
 	mm->mmap = NULL;
 	mm->mm_rb = RB_ROOT;
 	mm->vmacache_seqnum = 0;
-#if defined(OPLUS_FEATURE_VIRTUAL_RESERVE_MEMORY) && defined(CONFIG_VIRTUAL_RESERVE_MEMORY)
-	mm->va_feature = 0;
-	mm->va_feature_rnd = 0;
-	mm->zygoteheap_in_MB = 0;
-#endif
 #ifdef CONFIG_SPECULATIVE_PAGE_FAULT
 	rwlock_init(&mm->mm_rb_lock);
 #endif
@@ -1261,28 +1261,25 @@ static int copy_fs(unsigned long clone_flags, struct task_struct *tsk)
 static int copy_files(unsigned long clone_flags, struct task_struct *tsk)
 {
 	struct files_struct *oldf, *newf;
-	int error = 0;
 
 	/*
 	 * A background process may not have any files ...
 	 */
 	oldf = current->files;
 	if (!oldf)
-		goto out;
+		return 0;
 
 	if (clone_flags & CLONE_FILES) {
 		atomic_inc(&oldf->count);
-		goto out;
+		return 0;
 	}
 
-	newf = dup_fd(oldf, &error);
-	if (!newf)
-		goto out;
+	newf = dup_fd(oldf, NULL);
+	if (IS_ERR(newf))
+		return PTR_ERR(newf);
 
 	tsk->files = newf;
-	error = 0;
-out:
-	return error;
+	return 0;
 }
 
 static int copy_io(unsigned long clone_flags, struct task_struct *tsk)
@@ -2121,9 +2118,6 @@ long _do_fork(unsigned long clone_flags,
 	int trace = 0;
 	long nr;
 
-	/* Boost CPU to the max for 1250 ms when userspace launches an app */
-		devfreq_boost_kick_max(DEVFREQ_MSM_CPUBW, 1250);
-
 	/*
 	 * Determine whether and which event to report to ptracer.  When
 	 * called from kernel_thread or CLONE_UNTRACED is explicitly
@@ -2363,13 +2357,13 @@ static int unshare_fs(unsigned long unshare_flags, struct fs_struct **new_fsp)
 static int unshare_fd(unsigned long unshare_flags, struct files_struct **new_fdp)
 {
 	struct files_struct *fd = current->files;
-	int error = 0;
 
 	if ((unshare_flags & CLONE_FILES) &&
 	    (fd && atomic_read(&fd->count) > 1)) {
-		*new_fdp = dup_fd(fd, &error);
-		if (!*new_fdp)
-			return error;
+		fd = dup_fd(fd, NULL);
+		if (IS_ERR(fd))
+			return PTR_ERR(fd);
+		*new_fdp = fd;
 	}
 
 	return 0;
@@ -2481,6 +2475,8 @@ SYSCALL_DEFINE1(unshare, unsigned long, unshare_flags)
 			new_cred = NULL;
 		}
 	}
+
+	perf_event_namespaces(current);
 
 bad_unshare_cleanup_cred:
 	if (new_cred)

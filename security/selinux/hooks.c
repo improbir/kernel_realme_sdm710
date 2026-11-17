@@ -824,8 +824,11 @@ static int selinux_set_mnt_opts(struct super_block *sb,
 	if (!strcmp(sb->s_type->name, "debugfs") ||
 	    !strcmp(sb->s_type->name, "tracefs") ||
 	    !strcmp(sb->s_type->name, "sysfs") ||
+	    !strcmp(sb->s_type->name, "pstore") ||
 	    !strcmp(sb->s_type->name, "bpf") ||
-	    !strcmp(sb->s_type->name, "pstore"))
+	    !strcmp(sb->s_type->name, "binder") ||
+	    !strcmp(sb->s_type->name, "cgroup") ||
+	    !strcmp(sb->s_type->name, "cgroup2"))
 		sbsec->flags |= SE_SBGENFS;
 
 	if (!sbsec->behavior) {
@@ -6581,17 +6584,6 @@ void selinux_complete_init(void)
 	printk(KERN_DEBUG "SELinux:  Setting up existing superblocks.\n");
 	iterate_supers(delayed_superblock_init, NULL);
 }
-
-
-#ifdef CONFIG_OPLUS_SECURE_GUARD
-int get_current_security_context(char **context, u32 *context_len)
-{
-	u32 sid = current_sid();
-	/*Security@ROM, Ke.Li, ROOT_CHECK, kernel-4.9 only 3 param. 2021-3-20*/
-	//return security_sid_to_context(&selinux_state, sid, context, context_len);
-	return security_sid_to_context(sid, context, context_len);
-}
-#endif /* CONFIG_OPLUS_SECURE_GUARD */
 
 /* SELinux requires early initialization in order to label
    all processes and objects when they are created. */

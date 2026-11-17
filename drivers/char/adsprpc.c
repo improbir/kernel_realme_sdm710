@@ -612,64 +612,44 @@ static void fastrpc_remote_buf_list_free(struct fastrpc_file *fl)
 	} while (free);
 }
 
+static void fastrpc_mmap_add_global(struct fastrpc_mmap *map)
+{
+	struct fastrpc_apps *me = &gfa;
+	unsigned long irq_flags = 0;
+
+	spin_lock_irqsave(&me->hlock, irq_flags);
+	hlist_add_head(&map->hn, &me->maps);
+	spin_unlock_irqrestore(&me->hlock, irq_flags);
+}
+
 static void fastrpc_mmap_add(struct fastrpc_mmap *map)
 {
-	if (map->flags == ADSP_MMAP_HEAP_ADDR ||
-				map->flags == ADSP_MMAP_REMOTE_HEAP_ADDR) {
-		struct fastrpc_apps *me = &gfa;
+	struct fastrpc_file *fl = map->fl;
 
-		spin_lock(&me->hlock);
-		hlist_add_head(&map->hn, &me->maps);
-		spin_unlock(&me->hlock);
-	} else {
-		struct fastrpc_file *fl = map->fl;
-
-		hlist_add_head(&map->hn, &fl->maps);
-	}
+	hlist_add_head(&map->hn, &fl->maps);
 }
 
 static int fastrpc_mmap_find(struct fastrpc_file *fl, int fd,
 		uintptr_t va, size_t len, int mflags, int refs,
 		struct fastrpc_mmap **ppmap)
 {
-	struct fastrpc_apps *me = &gfa;
 	struct fastrpc_mmap *match = NULL, *map = NULL;
 	struct hlist_node *n;
 
 	if ((va + len) < va)
 		return -EOVERFLOW;
-	if (mflags == ADSP_MMAP_HEAP_ADDR ||
-				 mflags == ADSP_MMAP_REMOTE_HEAP_ADDR) {
-		spin_lock(&me->hlock);
-		hlist_for_each_entry_safe(map, n, &me->maps, hn) {
-			if (va >= map->va &&
-				va + len <= map->va + map->len &&
-				map->fd == fd) {
-				if (refs) {
-					if (map->refs + 1 == INT_MAX) {
-						spin_unlock(&me->hlock);
-						return -ETOOMANYREFS;
-					}
-					map->refs++;
-				}
-				match = map;
-				break;
+
+	hlist_for_each_entry_safe(map, n, &fl->maps, hn) {
+		if (va >= map->va &&
+			va + len <= map->va + map->len &&
+			map->fd == fd) {
+			if (refs) {
+				if (map->refs + 1 == INT_MAX)
+					return -ETOOMANYREFS;
+				map->refs++;
 			}
-		}
-		spin_unlock(&me->hlock);
-	} else {
-		hlist_for_each_entry_safe(map, n, &fl->maps, hn) {
-			if (va >= map->va &&
-				va + len <= map->va + map->len &&
-				map->fd == fd) {
-				if (refs) {
-					if (map->refs + 1 == INT_MAX)
-						return -ETOOMANYREFS;
-					map->refs++;
-				}
-				match = map;
-				break;
-			}
+			match = map;
+			break;
 		}
 	}
 	if (match) {
@@ -1025,8 +1005,9 @@ static int fastrpc_mmap_create(struct fastrpc_file *fl, int fd,
 		map->va = va;
 	}
 	map->len = len;
-
-	fastrpc_mmap_add(map);
+	if ((mflags != ADSP_MMAP_HEAP_ADDR) &&
+			(mflags != ADSP_MMAP_REMOTE_HEAP_ADDR))
+		fastrpc_mmap_add(map);
 	*ppmap = map;
 
 bail:
@@ -1524,7 +1505,7 @@ static int get_args(uint32_t kernel, struct smq_invoke_ctx *ctx)
 	uintptr_t args;
 	size_t rlen = 0, copylen = 0, metalen = 0, lrpralen = 0;
 	int i, oix;
-	int err = 0;
+	int err = 0, j = 0;
 	int mflags = 0;
 	uint64_t *fdlist;
 	uint32_t *crclist;
@@ -1570,6 +1551,8 @@ static int get_args(uint32_t kernel, struct smq_invoke_ctx *ctx)
 		if (!err && ctx->maps[i])
 			ctx->maps[i]->ctx_refs++;
 		if (err) {
+			for (j = bufs; j < i; j++)
+				fastrpc_mmap_free(ctx->maps[j], 0);
 			mutex_unlock(&ctx->fl->fl_map_mutex);
 			goto bail;
 		}
@@ -2431,6 +2414,7 @@ static int fastrpc_init_process(struct fastrpc_file *fl,
 			mutex_unlock(&fl->fl_map_mutex);
 			if (err)
 				goto bail;
+			fastrpc_mmap_add_global(mem);
 			phys = mem->phys;
 			size = mem->size;
 			VERIFY(err, !hyp_assign_phys(phys, (uint64_t)size,
@@ -2869,7 +2853,7 @@ static int fastrpc_mmap_remove_ssr(struct fastrpc_file *fl)
 	} while (match);
 bail:
 	if (err && match)
-		fastrpc_mmap_add(match);
+		fastrpc_mmap_add_global(match);
 	return err;
 }
 
@@ -2982,7 +2966,11 @@ static int fastrpc_internal_munmap(struct fastrpc_file *fl,
 bail:
 	if (err && map) {
 		mutex_lock(&fl->fl_map_mutex);
-		fastrpc_mmap_add(map);
+		if ((map->flags == ADSP_MMAP_HEAP_ADDR) ||
+				(map->flags == ADSP_MMAP_REMOTE_HEAP_ADDR))
+			fastrpc_mmap_add_global(map);
+		else
+			fastrpc_mmap_add(map);
 		mutex_unlock(&fl->fl_map_mutex);
 	}
 	mutex_unlock(&fl->map_mutex);
@@ -3077,6 +3065,9 @@ static int fastrpc_internal_mmap(struct fastrpc_file *fl,
 		if (err)
 			goto bail;
 		map->raddr = raddr;
+		if (ud->flags == ADSP_MMAP_HEAP_ADDR ||
+				ud->flags == ADSP_MMAP_REMOTE_HEAP_ADDR)
+			fastrpc_mmap_add_global(map);
 	}
 	ud->vaddrout = raddr;
  bail:

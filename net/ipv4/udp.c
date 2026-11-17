@@ -218,11 +218,12 @@ static int udp_reuseport_add_sock(struct sock *sk, struct udp_hslot *hslot,
 		    (sk2->sk_bound_dev_if == sk->sk_bound_dev_if) &&
 		    sk2->sk_reuseport && uid_eq(uid, sock_i_uid(sk2)) &&
 		    (*saddr_same)(sk, sk2, false)) {
-			return reuseport_add_sock(sk, sk2);
+			return reuseport_add_sock(sk, sk2,
+						  inet_rcv_saddr_any(sk));
 		}
 	}
 
-	return reuseport_alloc(sk);
+	return reuseport_alloc(sk, inet_rcv_saddr_any(sk));
 }
 
 /**
@@ -492,8 +493,8 @@ static struct sock *udp4_lib_lookup2(struct net *net,
  * harder than this. -DaveM
  */
 struct sock *__udp4_lib_lookup(struct net *net, __be32 saddr,
-		__be16 sport, __be32 daddr, __be16 dport,
-		int dif, struct udp_table *udptable, struct sk_buff *skb)
+		__be16 sport, __be32 daddr, __be16 dport,int dif,
+		int sdif, struct udp_table *udptable, struct sk_buff *skb)
 {
 	struct sock *sk, *result;
 	unsigned short hnum = ntohs(dport);
@@ -568,7 +569,7 @@ static inline struct sock *__udp4_lib_lookup_skb(struct sk_buff *skb,
 
 	return __udp4_lib_lookup(dev_net(skb->dev), iph->saddr, sport,
 				 iph->daddr, dport, inet_iif(skb),
-				 udptable, skb);
+				 inet_sdif(skb) , udptable, skb);
 }
 
 struct sock *udp4_lib_lookup_skb(struct sk_buff *skb,
@@ -578,7 +579,7 @@ struct sock *udp4_lib_lookup_skb(struct sk_buff *skb,
 
 	return __udp4_lib_lookup(dev_net(skb->dev), iph->saddr, sport,
 				 iph->daddr, dport, inet_iif(skb),
-				 &udp_table, NULL);
+				 0, &udp_table, NULL);
 }
 EXPORT_SYMBOL_GPL(udp4_lib_lookup_skb);
 
@@ -593,7 +594,7 @@ struct sock *udp4_lib_lookup(struct net *net, __be32 saddr, __be16 sport,
 	struct sock *sk;
 
 	sk = __udp4_lib_lookup(net, saddr, sport, daddr, dport,
-			       dif, &udp_table, NULL);
+			       dif, 0, &udp_table, NULL);
 	if (sk && !atomic_inc_not_zero(&sk->sk_refcnt))
 		sk = NULL;
 	return sk;
@@ -645,7 +646,7 @@ void __udp4_lib_err(struct sk_buff *skb, u32 info, struct udp_table *udptable)
 	struct net *net = dev_net(skb->dev);
 
 	sk = __udp4_lib_lookup(net, iph->daddr, uh->dest,
-			iph->saddr, uh->source, skb->dev->ifindex, udptable,
+			iph->saddr, uh->source, skb->dev->ifindex, 0, udptable,
 			NULL);
 	if (!sk) {
 		__ICMP_INC_STATS(net, ICMP_MIB_INERRORS);
@@ -1355,6 +1356,19 @@ csum_copy_err:
 	goto try_again;
 }
 
+int udp_pre_connect(struct sock *sk, struct sockaddr *uaddr, int addr_len)
+{
+	/* This check is replicated from __ip4_datagram_connect() and
+	 * intended to prevent BPF program called below from accessing bytes
+	 * that are out of the bound specified by user in addr_len.
+	 */
+	if (addr_len < sizeof(struct sockaddr_in))
+		return -EINVAL;
+
+	return BPF_CGROUP_RUN_PROG_INET4_CONNECT_LOCK(sk, uaddr);
+}
+EXPORT_SYMBOL(udp_pre_connect);
+
 int __udp_disconnect(struct sock *sk, int flags)
 {
 	struct inet_sock *inet = inet_sk(sk);
@@ -1920,7 +1934,7 @@ static struct sock *__udp4_lib_mcast_demux_lookup(struct net *net,
 static struct sock *__udp4_lib_demux_lookup(struct net *net,
 					    __be16 loc_port, __be32 loc_addr,
 					    __be16 rmt_port, __be32 rmt_addr,
-					    int dif)
+					    int dif, int sdif)
 {
 	unsigned short hnum = ntohs(loc_port);
 	unsigned int hash2 = udp4_portaddr_hash(net, loc_addr, hnum);
@@ -1932,7 +1946,7 @@ static struct sock *__udp4_lib_demux_lookup(struct net *net,
 
 	udp_portaddr_for_each_entry_rcu(sk, &hslot2->head) {
 		if (INET_MATCH(sk, net, acookie, rmt_addr,
-			       loc_addr, ports, dif))
+			       loc_addr, ports, dif, sdif))
 			return sk;
 		/* Only check first socket in chain */
 		break;
@@ -1948,6 +1962,7 @@ void udp_v4_early_demux(struct sk_buff *skb)
 	struct sock *sk = NULL;
 	struct dst_entry *dst;
 	int dif = skb->dev->ifindex;
+	int sdif = inet_sdif(skb);
 	int ours;
 
 	/* validate the packet */
@@ -1976,7 +1991,7 @@ void udp_v4_early_demux(struct sk_buff *skb)
 						   uh->source, iph->saddr, dif);
 	} else if (skb->pkt_type == PACKET_HOST) {
 		sk = __udp4_lib_demux_lookup(net, uh->dest, iph->daddr,
-					     uh->source, iph->saddr, dif);
+					     uh->source, iph->saddr, dif, sdif);
 	}
 
 	if (!sk || !atomic_inc_not_zero_hint(&sk->sk_refcnt, 2))
@@ -2260,6 +2275,7 @@ struct proto udp_prot = {
 	.name		   = "UDP",
 	.owner		   = THIS_MODULE,
 	.close		   = udp_lib_close,
+	.pre_connect	   = udp_pre_connect,
 	.connect	   = ip4_datagram_connect,
 	.disconnect	   = udp_disconnect,
 	.ioctl		   = udp_ioctl,

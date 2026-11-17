@@ -2643,6 +2643,11 @@ static int mlx4_xdp_set(struct net_device *dev, struct bpf_prog *prog)
 	int err;
 	int i;
 
+	if (prog && prog->xdp_adjust_head) {
+		en_err(priv, "Does not support bpf_xdp_adjust_head()\n");
+		return -EOPNOTSUPP;
+	}
+
 	xdp_ring_num = prog ? ALIGN(priv->rx_ring_num, MLX4_EN_NUM_UP) : 0;
 
 	/* No need to reconfigure buffers when simply swapping the
@@ -2725,7 +2730,7 @@ static bool mlx4_xdp_attached(struct net_device *dev)
 	return !!priv->xdp_ring_num;
 }
 
-static int mlx4_xdp(struct net_device *dev, struct netdev_xdp *xdp)
+static int mlx4_xdp(struct net_device *dev, struct netdev_bpf *bpf)
 {
 	switch (xdp->command) {
 	case XDP_SETUP_PROG:
@@ -2766,7 +2771,7 @@ static const struct net_device_ops mlx4_netdev_ops = {
 	.ndo_udp_tunnel_del	= mlx4_en_del_vxlan_port,
 	.ndo_features_check	= mlx4_en_features_check,
 	.ndo_set_tx_maxrate	= mlx4_en_set_tx_maxrate,
-	.ndo_xdp		= mlx4_xdp,
+	.ndo_bpf		= mlx4_xdp,
 };
 
 static const struct net_device_ops mlx4_netdev_ops_master = {
@@ -2803,7 +2808,7 @@ static const struct net_device_ops mlx4_netdev_ops_master = {
 	.ndo_udp_tunnel_del	= mlx4_en_del_vxlan_port,
 	.ndo_features_check	= mlx4_en_features_check,
 	.ndo_set_tx_maxrate	= mlx4_en_set_tx_maxrate,
-	.ndo_xdp		= mlx4_xdp,
+	.ndo_bpf		= mlx4_xdp,
 };
 
 struct mlx4_en_bond {

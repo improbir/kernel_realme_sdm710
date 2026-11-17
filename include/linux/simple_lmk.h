@@ -1,6 +1,10 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
- * Copyright (C) 2019-2020 Sultan Alsawaf <sultan@kerneltoast.com>.
+<<<<<<< HEAD
+ * Copyright (C) 2019-2026 Sultan Alsawaf <sultan@kerneltoast.com>.
+=======
+ * Copyright (C) 2019-2026 Sultan Alsawaf <sultan@kerneltoast.com>.
+>>>>>>> kaderbava/16-bpf
  */
 #ifndef _SIMPLE_LMK_H_
 #define _SIMPLE_LMK_H_
